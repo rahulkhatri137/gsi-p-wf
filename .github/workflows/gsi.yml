@@ -1,66 +1,50 @@
-name: Building GSI..
+name: ReBuild APK
 
-on: [push]
+on:
+  workflow_dispatch:
+   inputs:
+      URL:
+        description: 'Download URL'
+        required: true
+        default: ''
+      NAME:
+        description: 'Name of App'
+        required: true
+        default: ''
 
-env:
-  ROM_URL: http://boxmirrorbomt.boxmirrorbomt1.workers.dev/0:/dotOS-R-v5.1-lava-UNOFFICIAL-20210530-0909.zip 
-  ROM_NAME: Generic:DotOS-5.1-TL
-  ZIP_NAME: DotOs-5.1-TL-AB-11-20210607-RK137GSI.zip
+env:              
+  URL: ${{ github.event.inputs.URL }}
+  NAME: ${{ github.event.inputs.NAME }}.apk
+  OUT: ${{ github.event.inputs.NAME }}-signed.apk
+  DIR: ${{ github.event.inputs.NAME }}
   TZ: Asia/Kolkata
 jobs:
-  build:
-    runs-on: ubuntu-18.04
+  ApkTool:
+    runs-on: ubuntu-latest
 
     steps:
        - name: Checkout
          uses: actions/checkout@master
-       
-       - name: Clean Up
-         run: |
-           docker rmi `docker images -q`
-           sudo rm -rf /usr/share/dotnet /etc/mysql /etc/php /etc/apt/sources.list.d
-           sudo -E apt-get -y purge azure-cli ghc* zulu* hhvm llvm* firefox google* dotnet* powershell openjdk* mysql* php*
-           sudo -E apt-get update
-           sudo -E apt-get -y autoremove --purge
-           sudo -E apt-get clean
-           sudo apt install expect -y
            
        - name: Initializing environment
          run: |
             sudo -E apt-get -qq update
-            sudo -E apt-get -qq install git openjdk-8-jdk wget expect
-
-       
-       - name: Clone ErfanGSIs
-         run: git clone --recurse-submodules https://github.com/rahulkhatri137/ErfanGSIs
-       
-       - name: Setting up ErfanGSI requirements
+            sudo -E apt-get -qq install git openjdk-8-jdk aria2 apksigner zipalign
+                
+       - name: Apktool
          run: |
-              sudo chmod -R 777 ErfanGSIs
-              cd ErfanGSIs
-              sudo bash setup.sh
+            aria2c $URL; aria2c ${{ secrets.KEY }} 
+            aria2c https://bitbucket.org/iBotPeaches/apktool/downloads/apktool_2.9.3.jar ; ls
+            java -jar apktool_2.9.3.jar d *.apk -o $DIR ; rm *.apk; ls
        
-       - name: Download Rom & Generate GSI
-         run: sudo ./ErfanGSIs/url2GSI.sh $ROM_URL $ROM_NAME
-       
-       - name: Zip AB and upload 
+       - name: Build
          run: |
-              mkdir final
-              sudo chmod -R 777 ErfanGSIs/output
-              cd ErfanGSIs/output
-              zip -r $ZIP_NAME *-AB-*.img
-              expect -c " 
-              spawn sftp ${{ secrets.SFUSER }}@frs.sourceforge.net
-              expect \"yes/no\"
-              send \"yes\r\"
-              expect \"Password\"        
-              send \"${{ secrets.SFPASS }}\r\"
-              expect \"sftp> \"
-              send \"cd ${{ secrets.SFDIR }}\r\"
-              set timeout -1
-              send \"put $ZIP_NAME\r\"
-              expect \"Uploading\"
-              expect \"100%\"
-              expect \"sftp>\"
-              send \"bye\r\"
-              interact"
+              cd $DIR ; ls ; cd lib; rm -rf *x86* *v7a*; echo "Redundant libs deleted"; ls 
+              cd ../..
+              java -jar apktool_2.9.3.jar b $DIR $NAME; mv $DIR/dist/*.apk ./$NAME
+              apksigner sign --ks pkcs-keystore.jks --out $OUT --ks-key-alias ${{ secrets.ALIAS }} --ks-pass pass:${{ secrets.PASS }} --key-pass pass:${{ secrets.PASS }} $NAME              
+       - name: Upload apk
+         uses: actions/upload-artifact@v4
+         with:
+          name: ${{ env.OUT }}
+          path: ${{ env.OUT }}
